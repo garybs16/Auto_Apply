@@ -125,6 +125,23 @@ def migrate_credentials_command() -> None:
         console.print("[dim]No legacy profile password found; nothing to migrate.[/dim]")
 
 
+@app.command("email-verification")
+def email_verification_command(
+    enabled: bool = typer.Option(False, "--enable/--disable", help="Allow Gmail verification-code handling."),
+) -> None:
+    """Toggle limited Gmail access for employer account verification."""
+    from applypilot.credentials import set_email_verification
+
+    set_email_verification(enabled)
+    if enabled:
+        console.print(
+            "[green]Gmail verification enabled.[/green] The first application that needs it "
+            "may open a one-time Google authorization page."
+        )
+    else:
+        console.print("[yellow]Gmail verification disabled; verification will pause for manual completion.[/yellow]")
+
+
 @app.command()
 def autopilot(
     resume: Optional[Path] = typer.Option(None, "--resume", exists=True, readable=True, help="Resume PDF/TXT to import."),

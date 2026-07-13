@@ -28,6 +28,14 @@ applypilot autopilot --resume "C:\path\to\resume.pdf" --profile "C:\path\to\prof
 
 Without `--submit`, Autopilot prepares the applications and stops for resume review.
 
+To allow verification codes to be handled automatically, explicitly enable the limited Gmail integration once:
+
+```powershell
+applypilot email-verification --enable
+```
+
+The first verification attempt may require a one-time Google authorization in the browser.
+
 ### Product highlights
 
 - Automatically extracts selectable text from an uploaded PDF resume.

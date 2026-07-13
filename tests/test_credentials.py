@@ -11,6 +11,7 @@ from applypilot.credentials import (
     derive_site_password,
     normalize_site,
     migrate_legacy_credentials,
+    set_email_verification,
 )
 
 
@@ -49,6 +50,18 @@ class CredentialTests(unittest.TestCase):
             env_text = env_path.read_text(encoding="utf-8")
             self.assertIn("JOB_ACCOUNT_LEGACY_PASSWORD=legacy-password", env_text)
             self.assertIn("JOB_ACCOUNT_MASTER_SECRET=", env_text)
+
+    def test_email_verification_toggle_updates_private_config(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {}, clear=True):
+            root = Path(tmp)
+            profile_path = root / "profile.json"
+            env_path = root / ".env"
+            profile_path.write_text(json.dumps({"personal": {"email": "candidate@example.com"}}), encoding="utf-8")
+            with patch.object(config, "PROFILE_PATH", profile_path), patch.object(config, "ENV_PATH", env_path):
+                set_email_verification(True)
+            profile = json.loads(profile_path.read_text(encoding="utf-8"))
+            self.assertEqual(profile["accounts"]["email_verification"], "gmail")
+            self.assertIn("EMAIL_VERIFICATION_ENABLED=true", env_path.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

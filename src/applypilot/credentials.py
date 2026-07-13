@@ -133,3 +133,15 @@ def migrate_legacy_credentials() -> bool:
         encoding="utf-8",
     )
     return True
+
+
+def set_email_verification(enabled: bool) -> None:
+    """Enable or disable Gmail verification without rerunning onboarding."""
+    profile = config.load_profile()
+    accounts = profile.setdefault("accounts", {})
+    accounts["email_verification"] = "gmail" if enabled else "manual"
+    _upsert_env({"EMAIL_VERIFICATION_ENABLED": str(enabled).lower()})
+    config.PROFILE_PATH.write_text(
+        json.dumps(profile, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
