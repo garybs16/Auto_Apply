@@ -12,6 +12,13 @@ from datetime import datetime
 from pathlib import Path
 
 from applypilot import config
+from applypilot.credentials import (
+    account_creation_enabled,
+    email_verification_enabled,
+    legacy_password,
+    normalize_site,
+    password_for_site,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -180,7 +187,7 @@ Hard facts -> answer truthfully from the profile. No guessing. This includes:
   - Citizenship, clearance, licenses, certifications: answer from profile only
   - Criminal/background: answer from profile only
 
-Skills and tools -> be confident. This candidate is a {target_role} with {years} years experience. If the question asks "Do you have experience with [tool]?" and it's in the same domain (DevOps, backend, ML, cloud, automation), answer YES. Software engineers learn tools fast. Don't sell short.
+Skills and tools -> answer from the profile and resume only. This candidate is a {target_role} with {years} years experience. Answer YES only when the named skill/tool or clearly equivalent technology is supported by those sources. Otherwise answer NO, or briefly describe truthful adjacent experience when the form permits free text. Never turn learnability into a false claim.
 
 Open-ended questions ("Why do you want this role?", "Tell us about yourself", "What interests you?") -> Write 2-3 sentences. Be specific to THIS job. Reference something from the job description. Connect it to a real achievement from the resume. No generic fluff. No "I am passionate about..." -- sound like a real person.
 
@@ -198,7 +205,6 @@ def _build_hard_rules(profile: dict) -> str:
     display_name = f"{preferred_name} {preferred_last}".strip() if preferred_last else preferred_name
 
     # Build work auth rule dynamically
-    auth_info = work_auth.get("legally_authorized_to_work", "")
     sponsorship = work_auth.get("require_sponsorship", "")
     permit_type = work_auth.get("work_permit_type", "")
 
@@ -213,7 +219,51 @@ def _build_hard_rules(profile: dict) -> str:
     return f"""== HARD RULES (never break these) ==
 1. Never lie about: citizenship, work authorization, criminal history, education credentials, security clearance, licenses.
 2. {work_auth_rule}
-3. {name_rule}"""
+3. {name_rule}
+4. Never print, repeat, or expose account passwords, verification codes, API keys, or secrets in your final output."""
+
+
+def _build_account_section(profile: dict, job_url: str,
+                           include_credentials: bool = True) -> str:
+    """Build explicit account-creation and email-verification instructions."""
+    enabled = account_creation_enabled(profile)
+    verification = email_verification_enabled(profile)
+    try:
+        site = normalize_site(job_url)
+    except ValueError:
+        site = job_url
+    password = password_for_site(profile, site) if enabled and include_credentials else None
+    old_password = legacy_password(profile) if enabled and include_credentials else None
+
+    if not enabled:
+        return """== ACCOUNT CREATION ==
+Automatic account creation is disabled. Try an existing session or passwordless application flow. If the site requires a new account, output RESULT:FAILED:account_creation_disabled."""
+
+    if not password:
+        return """== ACCOUNT CREATION ==
+Account creation is enabled, but secure credentials are unavailable in this run. Output RESULT:FAILED:account_credentials_unconfigured."""
+
+    verification_instruction = (
+        "If an email code or verification link is required, use Gmail search/read only to find the newest message from this employer/ATS, read the code or link, and continue. Never modify or delete email."
+        if verification else
+        "Email verification automation is disabled. If verification is required, output RESULT:FAILED:email_verification_required so the user can complete it manually."
+    )
+    fallback_line = (
+        f"For an EXISTING account only, if the unique password fails, try this migrated legacy password once: {old_password}"
+        if old_password and old_password != password else
+        "Do not reuse credentials from other sites."
+    )
+    return f"""== ACCOUNT CREATION ==
+The user authorized employer account creation when it is required solely to submit this job application.
+Site: {site}
+Username/email: {profile['personal']['email']}
+Unique password for this site: {password}
+- First try an existing authenticated session, then sign in with these credentials.
+- {fallback_line}
+- If the account does not exist, create one with these credentials. Do not use Google/Microsoft/LinkedIn SSO.
+- Accept only terms required to create the account and submit the application. Decline newsletters, talent marketing, SMS marketing, and unrelated optional consent.
+- Never print the password or verification code in your output.
+- {verification_instruction}"""
 
 
 def _build_captcha_section() -> str:
@@ -421,7 +471,8 @@ If CapSolver genuinely failed (errorId > 0):
 
 def build_prompt(job: dict, tailored_resume: str,
                  cover_letter: str | None = None,
-                 dry_run: bool = False) -> str:
+                 dry_run: bool = False,
+                 include_credentials: bool = True) -> str:
     """Build the full instruction prompt for the apply agent.
 
     Loads the user profile and search config internally. All personal data
@@ -485,6 +536,12 @@ def build_prompt(job: dict, tailored_resume: str,
     screening_section = _build_screening_section(profile)
     hard_rules = _build_hard_rules(profile)
     captcha_section = _build_captcha_section()
+    job_url = job.get("application_url") or job["url"]
+    account_section = _build_account_section(
+        profile,
+        job_url,
+        include_credentials=include_credentials,
+    )
 
     # Cover letter fallback text
     city = personal.get("city", "the area")
@@ -539,7 +596,7 @@ Cover Letter PDF (upload if asked): {cl_upload_path or "N/A"}
 == YOUR MISSION ==
 Submit a complete, accurate application. Use the profile and resume as source data -- adapt to fit each form's format.
 
-If something unexpected happens and these instructions don't cover it, figure it out yourself. You are autonomous. Navigate pages, read content, try buttons, explore the site. The goal is always the same: submit the application. Do whatever it takes to reach that goal.
+If something unexpected happens and these instructions don't cover it, navigate and troubleshoot independently while staying within the candidate's supplied facts, the HARD RULES, and the NEVER DO list. The goal is a complete and truthful application.
 
 {hard_rules}
 
@@ -559,6 +616,8 @@ If something unexpected happens and these instructions don't cover it, figure it
 
 {screening_section}
 
+{account_section}
+
 == STEP-BY-STEP ==
 1. browser_navigate to the job URL.
 2. browser_snapshot to read the page. Then run CAPTCHA DETECT (see CAPTCHA section). If a CAPTCHA is found, solve it before continuing.
@@ -570,10 +629,10 @@ If something unexpected happens and these instructions don't cover it, figure it
 5. Login wall?
    5a. FIRST: check the URL. If you landed on {', '.join(blocked_sso)}, or any SSO/OAuth page -> STOP. Output RESULT:FAILED:sso_required. Do NOT try to sign in to Google/Microsoft/SSO.
    5b. Check for popups. Run browser_tabs action "list". If a new tab/window appeared (login popup), switch to it with browser_tabs action "select". Check the URL there too -- if it's SSO -> RESULT:FAILED:sso_required.
-   5c. Regular login form (employer's own site)? Try sign in: {personal['email']} / {personal.get('password', '')}
+   5c. Regular login form (employer's own site)? Follow ACCOUNT CREATION above. Never guess or invent credentials.
    5d. After clicking Login/Sign-in: run CAPTCHA DETECT. Login pages frequently have invisible CAPTCHAs that silently block form submissions. If found, solve it then retry login.
-   5e. Sign in failed? Try sign up with same email and password.
-   5f. Need email verification? Use search_emails + read_email to get the code.
+   5e. Sign in failed because the account does not exist? Create it only if ACCOUNT CREATION explicitly authorizes it.
+   5f. Need email verification? Follow the configured verification instruction in ACCOUNT CREATION.
    5g. After login, run browser_tabs action "list" again. Switch back to the application tab if needed.
    5h. All failed? Output RESULT:FAILED:login_issue. Do not loop.
 6. Upload resume. ALWAYS upload fresh -- delete any existing resume first, then browser_file_upload with the PDF path above. This is the tailored resume for THIS job. Non-negotiable.
@@ -591,6 +650,9 @@ RESULT:APPLIED -- submitted successfully
 RESULT:EXPIRED -- job closed or no longer accepting applications
 RESULT:CAPTCHA -- blocked by unsolvable captcha
 RESULT:LOGIN_ISSUE -- could not sign in or create account
+RESULT:FAILED:email_verification_required -- user must complete email verification
+RESULT:FAILED:account_creation_disabled -- user did not authorize account creation
+RESULT:FAILED:account_credentials_unconfigured -- secure account password is unavailable
 RESULT:FAILED:not_eligible_location -- onsite outside acceptable area, no remote option
 RESULT:FAILED:not_eligible_work_auth -- requires unauthorized work location
 RESULT:FAILED:reason -- any other failure (brief reason)

@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import subprocess
+from pathlib import Path
 from typing import Optional
 
 import typer
 from rich.console import Console
+from rich.panel import Panel
 from rich.table import Table
 
 from applypilot import __version__
@@ -72,6 +75,141 @@ def init() -> None:
     from applypilot.wizard.init import run_wizard
 
     run_wizard()
+
+
+@app.command("import-resume")
+def import_resume_command(
+    resume: Path = typer.Argument(..., exists=True, readable=True, help="Master resume (.pdf or .txt)."),
+) -> None:
+    """Import a resume and automatically create the text used by AI stages."""
+    from applypilot.onboarding import import_resume
+
+    try:
+        text_path, pdf_path = import_resume(resume)
+    except (ValueError, RuntimeError) as exc:
+        console.print(f"[red]Resume import failed:[/red] {exc}")
+        raise typer.Exit(code=1)
+    console.print(f"[green]Resume text ready:[/green] {text_path}")
+    if pdf_path:
+        console.print(f"[green]Resume PDF ready:[/green] {pdf_path}")
+
+
+@app.command("account-password")
+def account_password(
+    site: str = typer.Argument(..., help="Employer URL or domain."),
+    show: bool = typer.Option(False, "--show", help="Print the derived password to this terminal."),
+) -> None:
+    """Recover the deterministic password used for an employer account."""
+    from applypilot import config
+    from applypilot.credentials import password_for_site
+
+    profile = config.load_profile()
+    password = password_for_site(profile, site)
+    if not password:
+        console.print("[red]Account credentials are not configured.[/red] Run [bold]applypilot init[/bold].")
+        raise typer.Exit(code=1)
+    if not show:
+        console.print("Credential exists. Re-run with [bold]--show[/bold] to display it.")
+        return
+    console.print(password)
+
+
+@app.command("migrate-credentials")
+def migrate_credentials_command() -> None:
+    """Move legacy plaintext account credentials into the private local environment."""
+    from applypilot.credentials import migrate_legacy_credentials
+
+    if migrate_legacy_credentials():
+        console.print("[green]Legacy credentials migrated securely.[/green]")
+    else:
+        console.print("[dim]No legacy profile password found; nothing to migrate.[/dim]")
+
+
+@app.command()
+def autopilot(
+    resume: Optional[Path] = typer.Option(None, "--resume", exists=True, readable=True, help="Resume PDF/TXT to import."),
+    profile: Optional[Path] = typer.Option(None, "--profile", exists=True, readable=True, help="Completed profile JSON to import."),
+    limit: int = typer.Option(20, "--limit", "-l", min=1, help="Maximum applications to attempt."),
+    min_score: int = typer.Option(7, "--min-score", min=1, max=10, help="Minimum AI fit score."),
+    workers: int = typer.Option(1, "--workers", "-w", min=1, max=4, help="Parallel discovery/application workers."),
+    agent: str = typer.Option("codex", "--agent", help="Browser agent CLI: codex or claude."),
+    submit: bool = typer.Option(False, "--submit", help="Actually submit applications after preparation."),
+    headless: bool = typer.Option(False, "--headless", help="Run browser workers without visible windows."),
+) -> None:
+    """Run resume ingestion, discovery, scoring, tailoring, and application."""
+    from applypilot import config
+    from applypilot.onboarding import import_resume, install_profile, validate_profile
+
+    if resume:
+        try:
+            import_resume(resume)
+        except (ValueError, RuntimeError) as exc:
+            console.print(f"[red]Resume import failed:[/red] {exc}")
+            raise typer.Exit(code=1)
+    if profile:
+        try:
+            install_profile(profile)
+        except (ValueError, json.JSONDecodeError) as exc:
+            console.print(f"[red]Profile import failed:[/red] {exc}")
+            raise typer.Exit(code=1)
+
+    if not config.PROFILE_PATH.exists() or not config.RESUME_PATH.exists():
+        console.print("[red]Resume and profile are required.[/red] Run [bold]applypilot init[/bold] or pass --resume and --profile.")
+        raise typer.Exit(code=1)
+    loaded_profile = config.load_profile()
+    missing = validate_profile(loaded_profile)
+    if missing:
+        console.print("[red]Profile is incomplete:[/red] " + ", ".join(missing))
+        raise typer.Exit(code=1)
+
+    _bootstrap()
+    from applypilot.config import check_tier
+    from applypilot.database import get_connection
+    check_tier(3, "autopilot")
+    from applypilot.pipeline import run_pipeline
+
+    console.print(Panel.fit(
+        "[bold blue]Auto Apply Autopilot[/bold blue]\n"
+        "resume → discover → score → tailor → cover → apply",
+        border_style="blue",
+    ))
+    result = run_pipeline(
+        stages=["all"],
+        min_score=min_score,
+        workers=workers,
+        validation_mode="lenient",
+    )
+    if result.get("errors"):
+        console.print("[red]Preparation stopped because a pipeline stage failed.[/red]")
+        raise typer.Exit(code=1)
+
+    conn = get_connection()
+    ready = conn.execute(
+        "SELECT COUNT(*) FROM jobs WHERE tailored_resume_path IS NOT NULL AND applied_at IS NULL AND fit_score >= ?",
+        (min_score,),
+    ).fetchone()[0]
+    if ready == 0:
+        console.print("[yellow]No matching jobs produced an approved tailored resume, so nothing was submitted.[/yellow]")
+        return
+    if not submit:
+        console.print(
+            f"[yellow]{ready} application(s) are prepared but not submitted.[/yellow]\n"
+            "Review the generated resumes, then re-run this command with [bold]--submit[/bold]."
+        )
+        return
+
+    agent = agent.lower().strip()
+    if agent not in {"codex", "claude"}:
+        console.print("[red]--agent must be 'codex' or 'claude'.[/red]")
+        raise typer.Exit(code=2)
+    from applypilot.apply.launcher import main as apply_main
+    apply_main(
+        limit=min(limit, ready),
+        min_score=min_score,
+        workers=workers,
+        agent=agent,
+        headless=headless,
+    )
 
 
 @app.command()
@@ -249,7 +387,7 @@ def apply(
             raise typer.Exit(code=1)
         mcp_path = _profile_path.parent / ".mcp-apply-0.json"
         console.print(f"[green]Wrote prompt to:[/green] {prompt_file}")
-        console.print(f"\n[bold]Run manually:[/bold]")
+        console.print("\n[bold]Run manually:[/bold]")
         manual_cmd = _build_agent_command(agent, model, BASE_CDP_PORT, mcp_path)
         console.print(f"  {subprocess.list2cmdline(manual_cmd)} < {prompt_file}")
         return
@@ -364,7 +502,7 @@ def doctor() -> None:
     import shutil
     from applypilot.config import (
         load_env, PROFILE_PATH, RESUME_PATH, RESUME_PDF_PATH,
-        SEARCH_CONFIG_PATH, ENV_PATH, get_chrome_path,
+        SEARCH_CONFIG_PATH, get_chrome_path,
     )
 
     load_env()
@@ -378,7 +516,20 @@ def doctor() -> None:
     # --- Tier 1 checks ---
     # Profile
     if PROFILE_PATH.exists():
-        results.append(("profile.json", ok_mark, str(PROFILE_PATH)))
+        from applypilot.onboarding import validate_profile
+        loaded_profile = json.loads(PROFILE_PATH.read_text(encoding="utf-8"))
+        missing_profile = validate_profile(loaded_profile)
+        if missing_profile:
+            results.append(("profile.json", warn_mark, "Missing: " + ", ".join(missing_profile)))
+        else:
+            results.append(("profile.json", ok_mark, str(PROFILE_PATH)))
+        if loaded_profile.get("personal", {}).get("password"):
+            results.append(("Account security", warn_mark, "Legacy password stored in profile; re-run init to migrate"))
+        else:
+            from applypilot.credentials import account_creation_enabled, email_verification_enabled
+            account_note = "enabled" if account_creation_enabled(loaded_profile) else "disabled"
+            verify_note = "Gmail verification enabled" if email_verification_enabled(loaded_profile) else "manual email verification"
+            results.append(("Account creation", ok_mark if account_note == "enabled" else warn_mark, f"{account_note}; {verify_note}"))
     else:
         results.append(("profile.json", fail_mark, "Run 'applypilot init' to create"))
 
@@ -410,7 +561,7 @@ def doctor() -> None:
     has_openai = bool(os.environ.get("OPENAI_API_KEY"))
     has_local = bool(os.environ.get("LLM_URL"))
     if has_gemini:
-        model = os.environ.get("LLM_MODEL", "gemini-2.0-flash")
+        model = os.environ.get("LLM_MODEL", "gemini-2.5-flash")
         results.append(("LLM API key", ok_mark, f"Gemini ({model})"))
     elif has_openai:
         model = os.environ.get("LLM_MODEL", "gpt-4o-mini")

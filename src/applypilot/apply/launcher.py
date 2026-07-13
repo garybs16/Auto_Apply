@@ -26,7 +26,7 @@ from rich.live import Live
 
 from applypilot import config
 from applypilot.database import get_connection
-from applypilot.apply import chrome, dashboard, prompt as prompt_mod
+from applypilot.apply import prompt as prompt_mod
 from applypilot.apply.chrome import (
     launch_chrome, cleanup_worker, kill_all_chrome,
     reset_worker_dir, cleanup_on_exit, _kill_process_tree,
@@ -36,6 +36,7 @@ from applypilot.apply.dashboard import (
     init_worker, update_state, add_event, get_state,
     render_full, get_totals,
 )
+from applypilot.credentials import email_verification_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -66,22 +67,25 @@ if platform.system() != "Windows":
 
 def _make_mcp_config(cdp_port: int) -> dict:
     """Build MCP config dict for a specific CDP port."""
-    return {
-        "mcpServers": {
-            "playwright": {
+    servers = {
+        "playwright": {
                 "command": "npx",
                 "args": [
                     "@playwright/mcp@latest",
                     f"--cdp-endpoint=http://localhost:{cdp_port}",
                     f"--viewport-size={config.DEFAULTS['viewport']}",
                 ],
-            },
-            "gmail": {
+            }
+    }
+    try:
+        if email_verification_enabled(config.load_profile()):
+            servers["gmail"] = {
                 "command": "npx",
                 "args": ["-y", "@gongrzhe/server-gmail-autoauth-mcp"],
-            },
-        }
-    }
+            }
+    except (FileNotFoundError, KeyError):
+        pass
+    return {"mcpServers": servers}
 
 
 def _build_agent_command(agent: str, model: str | None, cdp_port: int,
@@ -136,6 +140,19 @@ def _build_agent_command(agent: str, model: str | None, cdp_port: int,
             "-c", f"mcp_servers.playwright.args={json.dumps(playwright_args)}",
             "-c", 'mcp_servers.playwright.default_tools_approval_mode="approve"',
         ]
+        try:
+            gmail_enabled = email_verification_enabled(config.load_profile())
+        except (FileNotFoundError, KeyError):
+            gmail_enabled = False
+        if gmail_enabled:
+            gmail_args = ["-y", "@gongrzhe/server-gmail-autoauth-mcp"]
+            gmail_tools = ["search_emails", "read_email", "send_email"]
+            cmd.extend([
+                "-c", f"mcp_servers.gmail.command={json.dumps('npx')}",
+                "-c", f"mcp_servers.gmail.args={json.dumps(gmail_args)}",
+                "-c", f"mcp_servers.gmail.enabled_tools={json.dumps(gmail_tools)}",
+                "-c", 'mcp_servers.gmail.default_tools_approval_mode="approve"',
+            ])
         if model:
             cmd.extend(["--model", model])
         cmd.append("-")
@@ -186,7 +203,7 @@ def acquire_job(target_url: str | None = None, min_score: int = 7,
                 params.extend(blocked_sites)
             url_clauses = ""
             if blocked_patterns:
-                url_clauses = " ".join(f"AND url NOT LIKE ?" for _ in blocked_patterns)
+                url_clauses = " ".join("AND url NOT LIKE ?" for _ in blocked_patterns)
                 params.extend(blocked_patterns)
             row = conn.execute(f"""
                 SELECT url, title, site, application_url, tailored_resume_path,
@@ -289,7 +306,11 @@ def gen_prompt(target_url: str, min_score: int = 7,
     if txt_path and txt_path.exists():
         resume_text = txt_path.read_text(encoding="utf-8")
 
-    prompt = prompt_mod.build_prompt(job=job, tailored_resume=resume_text)
+    prompt = prompt_mod.build_prompt(
+        job=job,
+        tailored_resume=resume_text,
+        include_credentials=False,
+    )
 
     # Release the lock so the job stays available
     release_lock(job["url"])

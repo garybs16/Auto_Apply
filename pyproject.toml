@@ -1,6 +1,6 @@
 [project]
 name = "applypilot"
-version = "0.3.0"
+version = "0.4.0"
 description = "Gary Samuel's personal AI-assisted job application automation project"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -27,6 +27,7 @@ dependencies = [
     "python-dotenv>=1.0",
     "pyyaml>=6.0",
     "pandas>=2.0",
+    "pypdf>=5.0",
     ]
 
 [project.optional-dependencies]

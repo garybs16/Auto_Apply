@@ -3,7 +3,6 @@
     "full_name": "YOUR_LEGAL_NAME",
     "preferred_name": "YOUR_PREFERRED_NAME",
     "email": "your.email@example.com",
-    "password": "YOUR_JOB_SITE_PASSWORD",
     "phone": "555-123-4567",
     "address": "123 Main St",
     "city": "Your City",
@@ -19,6 +18,10 @@
     "legally_authorized_to_work": "Yes",
     "require_sponsorship": "No",
     "work_permit_type": ""
+  },
+  "accounts": {
+    "create_when_required": true,
+    "email_verification": "manual"
   },
   "availability": {
     "earliest_start_date": "Immediately",

@@ -8,28 +8,48 @@
 
 
 
-https://github.com/user-attachments/assets/7ee3417f-43d4-4245-9952-35df1e77f2df
-
-
----
-
 ## What It Does
 
 Auto Apply is my customized 6-stage job application pipeline. It discovers jobs across multiple boards, scores them against a resume with AI, tailors application materials, writes cover letters, and submits selected applications through browser automation. The installed command remains `applypilot` for compatibility.
 
-Three commands. That's it.
+### One-command autopilot
 
-```bash
-pip install applypilot
-pip install --no-deps python-jobspy && pip install pydantic tls-client requests markdownify regex
-applypilot init          # one-time setup: resume, profile, preferences, API keys
-applypilot doctor        # verify your setup — shows what's installed and what's missing
-applypilot run           # discover > enrich > score > tailor > cover letters
-applypilot run -w 4      # same but parallel (4 threads for discovery/enrichment)
-applypilot apply         # autonomous browser-driven submission
-applypilot apply -w 3    # parallel apply (3 Chrome instances)
-applypilot apply --dry-run  # fill forms without submitting
-applypilot apply --agent codex --dry-run  # use Codex as the browser agent
+After the one-time setup wizard, a single command can refresh job discovery, score matches, generate truthful tailored materials, and submit up to 20 approved applications:
+
+```powershell
+applypilot autopilot --resume "C:\path\to\resume.pdf" --limit 20 --min-score 7 --submit
+```
+
+For a brand-new machine, a completed profile JSON can be supplied at the same time:
+
+```powershell
+applypilot autopilot --resume "C:\path\to\resume.pdf" --profile "C:\path\to\profile.json" --limit 20 --submit
+```
+
+Without `--submit`, Autopilot prepares the applications and stops for resume review.
+
+### Product highlights
+
+- Automatically extracts selectable text from an uploaded PDF resume.
+- Discovers, enriches, scores, tailors, and applies through one CLI workflow.
+- Creates employer accounts only when the user explicitly enables it.
+- Derives a different password for every employer from a private local master secret.
+- Can handle verification codes and email-only applications through an optional Gmail integration restricted to search, read, and send tools.
+- Redacts account credentials from generated debugging prompts and repository files.
+- Validates required profile fields before applications begin.
+- Keeps hard facts truthful and refuses unsafe identity, payment, biometric, or permission requests.
+
+### Installation
+
+```powershell
+git clone https://github.com/garybs16/Auto_Apply.git
+cd Auto_Apply
+python -m venv .venv
+.\.venv\Scripts\pip.exe install -e .
+.\.venv\Scripts\pip.exe install --no-deps python-jobspy
+.\.venv\Scripts\pip.exe install pydantic tls-client requests markdownify regex
+.\.venv\Scripts\applypilot.exe init
+.\.venv\Scripts\applypilot.exe doctor
 ```
 
 > **Why two install commands?** `python-jobspy` pins an exact numpy version in its metadata that conflicts with pip's resolver, but works fine at runtime with any modern numpy. The `--no-deps` flag bypasses the resolver; the second command installs jobspy's actual runtime dependencies. Everything except `python-jobspy` installs normally.
@@ -59,7 +79,7 @@ Runs stages 1-5: discovers jobs, scores them, tailors your resume, generates cov
 | **3. Score** | AI rates every job 1-10 based on your resume and preferences. Only high-fit jobs proceed |
 | **4. Tailor** | AI rewrites your resume per job: reorganizes, emphasizes relevant experience, adds keywords. Never fabricates |
 | **5. Cover Letter** | AI generates a targeted cover letter per job |
-| **6. Auto-Apply** | Claude Code navigates application forms, fills fields, uploads documents, answers questions, and submits |
+| **6. Auto-Apply** | Codex or Claude Code navigates application forms, creates authorized employer accounts, fills fields, uploads documents, answers questions, and submits |
 
 Each stage is independent. Run them all or pick what you need.
 
@@ -179,4 +199,4 @@ applypilot dashboard                    # Open HTML results dashboard
 
 ## License
 
-This personal project is based on ApplyPilot by [Pickle-Pixel](https://github.com/Pickle-Pixel/ApplyPilot) and is distributed under the [GNU Affero General Public License v3.0](LICENSE). The original attribution and license are retained as required.
+Modified by Gary Samuel on July 13, 2026. This personal project is based on ApplyPilot by [Pickle-Pixel](https://github.com/Pickle-Pixel/ApplyPilot) and is distributed under the [GNU Affero General Public License v3.0](LICENSE). The original attribution and license are retained as required.

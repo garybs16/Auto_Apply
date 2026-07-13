@@ -10,10 +10,10 @@ Interactive flow that creates ~/.applypilot/ with:
 from __future__ import annotations
 
 import json
+import secrets
 import shutil
 from pathlib import Path
 
-import typer
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
@@ -22,8 +22,6 @@ from applypilot.config import (
     APP_DIR,
     ENV_PATH,
     PROFILE_PATH,
-    RESUME_PATH,
-    RESUME_PDF_PATH,
     SEARCH_CONFIG_PATH,
     ensure_dirs,
 )
@@ -36,7 +34,9 @@ console = Console()
 # ---------------------------------------------------------------------------
 
 def _setup_resume() -> None:
-    """Prompt for resume file and copy into APP_DIR."""
+    """Prompt for a resume and automatically create its text version."""
+    from applypilot.onboarding import import_resume
+
     console.print(Panel("[bold]Step 1: Resume[/bold]\nPoint to your master resume file (.txt or .pdf)."))
 
     while True:
@@ -52,25 +52,14 @@ def _setup_resume() -> None:
             console.print("[red]Unsupported format.[/red] Provide a .txt or .pdf file.")
             continue
 
-        if suffix == ".txt":
-            shutil.copy2(src, RESUME_PATH)
-            console.print(f"[green]Copied to {RESUME_PATH}[/green]")
-        elif suffix == ".pdf":
-            shutil.copy2(src, RESUME_PDF_PATH)
-            console.print(f"[green]Copied to {RESUME_PDF_PATH}[/green]")
-
-            # Also ask for a plain-text version for LLM consumption
-            txt_path_str = Prompt.ask(
-                "Plain-text version of your resume (.txt)",
-                default="",
-            )
-            if txt_path_str.strip():
-                txt_src = Path(txt_path_str.strip().strip('"').strip("'")).expanduser().resolve()
-                if txt_src.exists():
-                    shutil.copy2(txt_src, RESUME_PATH)
-                    console.print(f"[green]Copied to {RESUME_PATH}[/green]")
-                else:
-                    console.print("[yellow]File not found, skipping plain-text copy.[/yellow]")
+        try:
+            text_path, pdf_path = import_resume(src)
+        except (ValueError, RuntimeError) as exc:
+            console.print(f"[red]Could not import resume:[/red] {exc}")
+            continue
+        console.print(f"[green]Resume text ready:[/green] {text_path}")
+        if pdf_path:
+            console.print(f"[green]Resume PDF ready:[/green] {pdf_path}")
         break
 
 
@@ -101,7 +90,6 @@ def _setup_profile() -> dict:
         "github_url": Prompt.ask("GitHub URL (optional)", default=""),
         "portfolio_url": Prompt.ask("Portfolio URL (optional)", default=""),
         "website_url": Prompt.ask("Personal website URL (optional)", default=""),
-        "password": Prompt.ask("Job site password (used for login walls during auto-apply)", password=True, default=""),
     }
 
     # -- Work Authorization --
@@ -256,7 +244,7 @@ def _setup_ai_features() -> None:
 
     if provider == "gemini":
         api_key = Prompt.ask("Gemini API key (from aistudio.google.com)")
-        model = Prompt.ask("Model", default="gemini-2.0-flash")
+        model = Prompt.ask("Model", default="gemini-2.5-flash")
         env_lines.append(f"GEMINI_API_KEY={api_key}")
         env_lines.append(f"LLM_MODEL={model}")
     elif provider == "openai":
@@ -279,7 +267,24 @@ def _setup_ai_features() -> None:
 # Auto-Apply
 # ---------------------------------------------------------------------------
 
-def _setup_auto_apply() -> None:
+def _upsert_env_values(values: dict[str, str]) -> None:
+    """Update selected local environment values without exposing secrets."""
+    existing_lines = ENV_PATH.read_text(encoding="utf-8").splitlines() if ENV_PATH.exists() else []
+    pending = dict(values)
+    updated: list[str] = []
+    for line in existing_lines:
+        key = line.split("=", 1)[0].strip() if "=" in line else ""
+        if key in pending:
+            updated.append(f"{key}={pending.pop(key)}")
+        else:
+            updated.append(line)
+    if pending and updated and updated[-1].strip():
+        updated.append("")
+    updated.extend(f"{key}={value}" for key, value in pending.items())
+    ENV_PATH.write_text("\n".join(updated).rstrip() + "\n", encoding="utf-8")
+
+
+def _setup_auto_apply(profile: dict) -> None:
     """Configure autonomous job application (requires a browser-agent CLI)."""
     console.print(Panel(
         "[bold]Step 5: Auto-Apply (optional)[/bold]\n"
@@ -290,6 +295,40 @@ def _setup_auto_apply() -> None:
     if not Confirm.ask("Enable autonomous job applications?", default=True):
         console.print("[dim]You can apply manually using the tailored resumes ApplyPilot generates.[/dim]")
         return
+
+    create_accounts = Confirm.ask(
+        "Create employer accounts automatically when an application requires one?",
+        default=True,
+    )
+    verify_email = False
+    if create_accounts:
+        verify_email = Confirm.ask(
+            "Use limited Gmail access for verification codes and email-only applications? (authorization required)",
+            default=False,
+        )
+        existing_secret = ""
+        if ENV_PATH.exists():
+            for line in ENV_PATH.read_text(encoding="utf-8").splitlines():
+                if line.startswith("JOB_ACCOUNT_MASTER_SECRET="):
+                    existing_secret = line.split("=", 1)[1].strip()
+                    break
+        _upsert_env_values({
+            "ACCOUNT_CREATION_ENABLED": "true",
+            "EMAIL_VERIFICATION_ENABLED": str(verify_email).lower(),
+            "JOB_ACCOUNT_MASTER_SECRET": existing_secret or secrets.token_urlsafe(32),
+        })
+        profile["accounts"] = {
+            "create_when_required": True,
+            "email_verification": "gmail" if verify_email else "manual",
+        }
+        PROFILE_PATH.write_text(json.dumps(profile, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        console.print("[green]Secure per-site account credentials configured.[/green]")
+    else:
+        profile["accounts"] = {
+            "create_when_required": False,
+            "email_verification": "manual",
+        }
+        PROFILE_PATH.write_text(json.dumps(profile, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
     # Check for a supported browser-agent CLI
     detected = [name for name in ("claude", "codex") if shutil.which(name)]
@@ -345,7 +384,7 @@ def run_wizard() -> None:
     console.print()
 
     # Step 2: Profile
-    _setup_profile()
+    profile = _setup_profile()
     console.print()
 
     # Step 3: Search config
@@ -357,7 +396,7 @@ def run_wizard() -> None:
     console.print()
 
     # Step 5: Auto-apply (Claude Code detection)
-    _setup_auto_apply()
+    _setup_auto_apply(profile)
     console.print()
 
     # Done — show tier status

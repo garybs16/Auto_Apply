@@ -5,6 +5,24 @@ All notable changes to ApplyPilot will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-07-13
+
+### Added
+- One-command `applypilot autopilot` workflow for resume ingestion through submission
+- Automatic PDF resume text extraction with validation
+- Explicit employer-account creation policy and optional email verification
+- Deterministic per-domain account passwords derived from a private local master secret
+- Safe migration for legacy plaintext profile passwords
+- Codex Gmail MCP tool allowlist and credential-redacted debug prompts
+- Profile completeness validation and account-configuration health checks
+- Automated unit tests for onboarding, credentials, prompts, and MCP configuration
+
+### Changed
+- Gemini setup now defaults to `gemini-2.5-flash`
+- Application prompts require evidence-backed skill answers and truthful submissions
+- Preserved resume projects are now enforced during tailoring
+- Project-wide lint cleanup
+
 ## [0.2.0] - 2026-02-17
 
 ### Added
