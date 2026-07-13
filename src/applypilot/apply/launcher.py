@@ -1,7 +1,7 @@
-"""Apply orchestration: acquire jobs, spawn Claude Code sessions, track results.
+"""Apply orchestration: acquire jobs, spawn browser-agent sessions, track results.
 
 This is the main entry point for the apply pipeline. It pulls jobs from
-the database, launches Chrome + Claude Code for each one, parses the
+the database, launches Chrome plus Claude Code or Codex for each one, parses the
 result, and updates the database. Supports parallel workers via --workers.
 """
 
@@ -11,6 +11,7 @@ import logging
 import os
 import platform
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -81,6 +82,66 @@ def _make_mcp_config(cdp_port: int) -> dict:
             },
         }
     }
+
+
+def _build_agent_command(agent: str, model: str | None, cdp_port: int,
+                         mcp_config_path: Path) -> list[str]:
+    """Build a non-interactive browser-agent command for one worker."""
+    candidates = [f"{agent}.cmd", f"{agent}.exe", agent] if platform.system() == "Windows" else [agent]
+    executable = next((path for name in candidates if (path := shutil.which(name))), None)
+    if executable is None:
+        raise FileNotFoundError(f"{agent} CLI was not found on PATH")
+
+    if agent == "claude":
+        cmd = [executable]
+        if model:
+            cmd.extend(["--model", model])
+        cmd.extend([
+            "-p",
+            "--mcp-config", str(mcp_config_path),
+            "--permission-mode", "bypassPermissions",
+            "--no-session-persistence",
+            "--disallowedTools", (
+                "mcp__gmail__draft_email,mcp__gmail__modify_email,"
+                "mcp__gmail__delete_email,mcp__gmail__download_attachment,"
+                "mcp__gmail__batch_modify_emails,mcp__gmail__batch_delete_emails,"
+                "mcp__gmail__create_label,mcp__gmail__update_label,"
+                "mcp__gmail__delete_label,mcp__gmail__get_or_create_label,"
+                "mcp__gmail__list_email_labels,mcp__gmail__create_filter,"
+                "mcp__gmail__list_filters,mcp__gmail__get_filter,"
+                "mcp__gmail__delete_filter"
+            ),
+            "--output-format", "stream-json",
+            "--verbose", "-",
+        ])
+        return cmd
+
+    if agent == "codex":
+        playwright_args = [
+            "-y",
+            "@playwright/mcp@latest",
+            f"--cdp-endpoint=http://localhost:{cdp_port}",
+            f"--viewport-size={config.DEFAULTS['viewport']}",
+        ]
+        cmd = [
+            executable, "--ask-for-approval", "never", "exec",
+            "--json",
+            "--ephemeral",
+            "--skip-git-repo-check",
+            "--ignore-user-config",
+            "--ignore-rules",
+            "--color", "never",
+            "--sandbox", "workspace-write",
+            "-c", f"mcp_servers.playwright.command={json.dumps('npx')}",
+            "-c", f"mcp_servers.playwright.args={json.dumps(playwright_args)}",
+            "-c", 'mcp_servers.playwright.default_tools_approval_mode="approve"',
+        ]
+        if model:
+            cmd.extend(["--model", model])
+        cmd.append("-")
+        return cmd
+
+    raise ValueError(f"Unsupported browser agent: {agent}")
 
 
 # ---------------------------------------------------------------------------
@@ -295,8 +356,9 @@ def reset_failed() -> int:
 # ---------------------------------------------------------------------------
 
 def run_job(job: dict, port: int, worker_id: int = 0,
-            model: str = "sonnet", dry_run: bool = False) -> tuple[str, int]:
-    """Spawn a Claude Code session for one job application.
+            model: str | None = None, dry_run: bool = False,
+            agent: str = "codex") -> tuple[str, int]:
+    """Spawn a browser-agent session for one job application.
 
     Returns:
         Tuple of (status_string, duration_ms). Status is one of:
@@ -321,27 +383,7 @@ def run_job(job: dict, port: int, worker_id: int = 0,
     mcp_config_path = config.APP_DIR / f".mcp-apply-{worker_id}.json"
     mcp_config_path.write_text(json.dumps(_make_mcp_config(port)), encoding="utf-8")
 
-    # Build claude command
-    cmd = [
-        "claude",
-        "--model", model,
-        "-p",
-        "--mcp-config", str(mcp_config_path),
-        "--permission-mode", "bypassPermissions",
-        "--no-session-persistence",
-        "--disallowedTools", (
-            "mcp__gmail__draft_email,mcp__gmail__modify_email,"
-            "mcp__gmail__delete_email,mcp__gmail__download_attachment,"
-            "mcp__gmail__batch_modify_emails,mcp__gmail__batch_delete_emails,"
-            "mcp__gmail__create_label,mcp__gmail__update_label,"
-            "mcp__gmail__delete_label,mcp__gmail__get_or_create_label,"
-            "mcp__gmail__list_email_labels,mcp__gmail__create_filter,"
-            "mcp__gmail__list_filters,mcp__gmail__get_filter,"
-            "mcp__gmail__delete_filter"
-        ),
-        "--output-format", "stream-json",
-        "--verbose", "-",
-    ]
+    cmd = _build_agent_command(agent, model, port, mcp_config_path)
 
     env = os.environ.copy()
     env.pop("CLAUDECODE", None)
@@ -397,7 +439,37 @@ def run_job(job: dict, port: int, worker_id: int = 0,
                 try:
                     msg = json.loads(line)
                     msg_type = msg.get("type")
-                    if msg_type == "assistant":
+                    if agent == "codex" and msg_type == "item.completed":
+                        item = msg.get("item", {})
+                        item_type = item.get("type")
+                        if item_type == "agent_message":
+                            agent_text = item.get("text", "")
+                            text_parts.append(agent_text)
+                            lf.write(agent_text + "\n")
+                        elif item_type == "mcp_tool_call":
+                            name = item.get("tool", item.get("name", "mcp_tool"))
+                            server = item.get("server", "")
+                            desc = f"{server}:{name}" if server else name
+                            lf.write(f"  >> {desc}\n")
+                            ws = get_state(worker_id)
+                            cur_actions = ws.actions if ws else 0
+                            update_state(worker_id, actions=cur_actions + 1,
+                                         last_action=desc[:35])
+                    elif agent == "codex" and msg_type == "turn.completed":
+                        usage = msg.get("usage", {})
+                        stats = {
+                            "input_tokens": usage.get("input_tokens", 0),
+                            "output_tokens": usage.get("output_tokens", 0),
+                            "cache_read": usage.get("cached_input_tokens", 0),
+                            "cache_create": 0,
+                            "cost_usd": 0,
+                            "turns": 1,
+                        }
+                    elif agent == "codex" and msg_type == "error":
+                        error_text = msg.get("message", str(msg))
+                        text_parts.append(error_text)
+                        lf.write(error_text + "\n")
+                    elif msg_type == "assistant":
                         for block in msg.get("message", {}).get("content", []):
                             bt = block.get("type")
                             if bt == "text":
@@ -453,7 +525,7 @@ def run_job(job: dict, port: int, worker_id: int = 0,
         duration_ms = int((time.time() - start) * 1000)
 
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        job_log = config.LOG_DIR / f"claude_{ts}_w{worker_id}_{job.get('site', 'unknown')[:20]}.txt"
+        job_log = config.LOG_DIR / f"{agent}_{ts}_w{worker_id}_{job.get('site', 'unknown')[:20]}.txt"
         job_log.write_text(output, encoding="utf-8")
 
         if stats:
@@ -548,7 +620,8 @@ def _is_permanent_failure(result: str) -> bool:
 def worker_loop(worker_id: int = 0, limit: int = 1,
                 target_url: str | None = None,
                 min_score: int = 7, headless: bool = False,
-                model: str = "sonnet", dry_run: bool = False) -> tuple[int, int]:
+                model: str | None = None, dry_run: bool = False,
+                agent: str = "codex") -> tuple[int, int]:
     """Run jobs sequentially until limit is reached or queue is empty.
 
     Args:
@@ -557,8 +630,9 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
         target_url: Apply to a specific URL.
         min_score: Minimum fit_score threshold.
         headless: Run Chrome headless.
-        model: Claude model name.
+        model: Optional browser-agent model name.
         dry_run: Don't click Submit.
+        agent: Browser agent CLI (``claude`` or ``codex``).
 
     Returns:
         Tuple of (applied_count, failed_count).
@@ -602,7 +676,8 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
             chrome_proc = launch_chrome(worker_id, port=port, headless=headless)
 
             result, duration_ms = run_job(job, port=port, worker_id=worker_id,
-                                            model=model, dry_run=dry_run)
+                                            model=model, dry_run=dry_run,
+                                            agent=agent)
 
             if result == "skipped":
                 release_lock(job["url"])
@@ -651,9 +726,10 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
 # ---------------------------------------------------------------------------
 
 def main(limit: int = 1, target_url: str | None = None,
-         min_score: int = 7, headless: bool = False, model: str = "sonnet",
+         min_score: int = 7, headless: bool = False, model: str | None = None,
          dry_run: bool = False, continuous: bool = False,
-         poll_interval: int = 60, workers: int = 1) -> None:
+         poll_interval: int = 60, workers: int = 1,
+         agent: str = "codex") -> None:
     """Launch the apply pipeline.
 
     Args:
@@ -661,11 +737,12 @@ def main(limit: int = 1, target_url: str | None = None,
         target_url: Apply to a specific URL.
         min_score: Minimum fit_score threshold.
         headless: Run Chrome in headless mode.
-        model: Claude model name.
+        model: Optional browser-agent model name.
         dry_run: Don't click Submit.
         continuous: Run forever, polling for new jobs.
         poll_interval: Seconds between DB polls when queue is empty.
         workers: Number of parallel workers (default 1).
+        agent: Browser agent CLI (``claude`` or ``codex``).
     """
     global POLL_INTERVAL
     POLL_INTERVAL = poll_interval
@@ -737,6 +814,7 @@ def main(limit: int = 1, target_url: str | None = None,
                     headless=headless,
                     model=model,
                     dry_run=dry_run,
+                    agent=agent,
                 )
             else:
                 # Multi-worker — distribute limit across workers
@@ -760,6 +838,7 @@ def main(limit: int = 1, target_url: str | None = None,
                             headless=headless,
                             model=model,
                             dry_run=dry_run,
+                            agent=agent,
                         ): i
                         for i in range(workers)
                     }

@@ -70,6 +70,8 @@ def _build_profile_summary(profile: dict) -> str:
         lines.append(f"Years Experience: {exp['years_of_experience_total']}")
     if exp.get("education_level"):
         lines.append(f"Education: {exp['education_level']}")
+    if exp.get("gpa"):
+        lines.append(f"GPA: {exp['gpa']}")
 
     # Availability
     lines.append(f"Available: {avail.get('earliest_start_date', 'Immediately')}")

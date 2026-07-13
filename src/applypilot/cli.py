@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import subprocess
 from typing import Optional
 
 import typer
@@ -84,6 +85,21 @@ def run(
         ),
     ),
     min_score: int = typer.Option(7, "--min-score", help="Minimum fit score for tailor/cover stages."),
+    title: Optional[list[str]] = typer.Option(
+        None,
+        "--title",
+        help="Exact job title to process. Repeat this option to select specific jobs for tailoring.",
+    ),
+    title_contains: Optional[list[str]] = typer.Option(
+        None,
+        "--title-contains",
+        help="Process jobs whose titles contain any supplied term. Repeat to include multiple terms.",
+    ),
+    discovered_on: Optional[str] = typer.Option(
+        None,
+        "--discovered-on",
+        help="Only process jobs discovered on this UTC date (YYYY-MM-DD).",
+    ),
     workers: int = typer.Option(1, "--workers", "-w", help="Parallel threads for discovery/enrichment stages."),
     stream: bool = typer.Option(False, "--stream", help="Run stages concurrently (streaming mode)."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview stages without executing."),
@@ -136,6 +152,9 @@ def run(
         stream=stream,
         workers=workers,
         validation_mode=validation,
+        selected_titles=title,
+        selected_title_terms=title_contains,
+        discovered_on=discovered_on,
     )
 
     if result.get("errors"):
@@ -147,7 +166,8 @@ def apply(
     limit: Optional[int] = typer.Option(None, "--limit", "-l", help="Max applications to submit."),
     workers: int = typer.Option(1, "--workers", "-w", help="Number of parallel browser workers."),
     min_score: int = typer.Option(7, "--min-score", help="Minimum fit score for job selection."),
-    model: str = typer.Option("haiku", "--model", "-m", help="Claude model name."),
+    agent: str = typer.Option("codex", "--agent", help="Browser agent CLI: codex or claude."),
+    model: Optional[str] = typer.Option(None, "--model", "-m", help="Optional browser-agent model name."),
     continuous: bool = typer.Option(False, "--continuous", "-c", help="Run forever, polling for new jobs."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview actions without submitting."),
     headless: bool = typer.Option(False, "--headless", help="Run browsers in headless mode."),
@@ -186,7 +206,14 @@ def apply(
 
     # --- Full apply mode ---
 
-    # Check 1: Tier 3 required (Claude Code CLI + Chrome)
+    agent = agent.lower().strip()
+    if agent not in {"claude", "codex"}:
+        console.print("[red]--agent must be 'claude' or 'codex'.[/red]")
+        raise typer.Exit(code=2)
+    if model is None and agent == "claude":
+        model = "haiku"
+
+    # Check 1: Tier 3 required (Claude Code or Codex CLI + Chrome)
     check_tier(3, "auto-apply")
 
     # Check 2: Profile exists
@@ -211,23 +238,20 @@ def apply(
             raise typer.Exit(code=1)
 
     if gen:
-        from applypilot.apply.launcher import gen_prompt, BASE_CDP_PORT
+        from applypilot.apply.launcher import gen_prompt, BASE_CDP_PORT, _build_agent_command
         target = url or ""
         if not target:
             console.print("[red]--gen requires --url to specify which job.[/red]")
             raise typer.Exit(code=1)
-        prompt_file = gen_prompt(target, min_score=min_score, model=model)
+        prompt_file = gen_prompt(target, min_score=min_score, model=model or "")
         if not prompt_file:
             console.print("[red]No matching job found for that URL.[/red]")
             raise typer.Exit(code=1)
         mcp_path = _profile_path.parent / ".mcp-apply-0.json"
         console.print(f"[green]Wrote prompt to:[/green] {prompt_file}")
         console.print(f"\n[bold]Run manually:[/bold]")
-        console.print(
-            f"  claude --model {model} -p "
-            f"--mcp-config {mcp_path} "
-            f"--permission-mode bypassPermissions < {prompt_file}"
-        )
+        manual_cmd = _build_agent_command(agent, model, BASE_CDP_PORT, mcp_path)
+        console.print(f"  {subprocess.list2cmdline(manual_cmd)} < {prompt_file}")
         return
 
     from applypilot.apply.launcher import main as apply_main
@@ -237,7 +261,8 @@ def apply(
     console.print("\n[bold blue]Launching Auto-Apply[/bold blue]")
     console.print(f"  Limit:    {'unlimited' if continuous else effective_limit}")
     console.print(f"  Workers:  {workers}")
-    console.print(f"  Model:    {model}")
+    console.print(f"  Agent:    {agent}")
+    console.print(f"  Model:    {model or 'default'}")
     console.print(f"  Headless: {headless}")
     console.print(f"  Dry run:  {dry_run}")
     if url:
@@ -253,6 +278,7 @@ def apply(
         dry_run=dry_run,
         continuous=continuous,
         workers=workers,
+        agent=agent,
     )
 
 
@@ -396,13 +422,17 @@ def doctor() -> None:
                         "Set GEMINI_API_KEY in ~/.applypilot/.env (run 'applypilot init')"))
 
     # --- Tier 3 checks ---
-    # Claude Code CLI
+    # Browser agent CLIs
     claude_bin = shutil.which("claude")
+    codex_bin = shutil.which("codex")
     if claude_bin:
         results.append(("Claude Code CLI", ok_mark, claude_bin))
     else:
-        results.append(("Claude Code CLI", fail_mark,
-                        "Install from https://claude.ai/code (needed for auto-apply)"))
+        results.append(("Claude Code CLI", warn_mark, "Not installed"))
+    if codex_bin:
+        results.append(("Codex CLI", ok_mark, codex_bin))
+    else:
+        results.append(("Codex CLI", warn_mark, "Not installed"))
 
     # Chrome
     try:

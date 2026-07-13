@@ -121,11 +121,17 @@ def _run_score() -> dict:
         return {"status": f"error: {e}"}
 
 
-def _run_tailor(min_score: int = 7, validation_mode: str = "normal") -> dict:
+def _run_tailor(min_score: int = 7, validation_mode: str = "normal",
+                selected_titles: list[str] | None = None,
+                selected_title_terms: list[str] | None = None,
+                discovered_on: str | None = None) -> dict:
     """Stage: Resume tailoring — generate tailored resumes for high-fit jobs."""
     try:
         from applypilot.scoring.tailor import run_tailoring
-        run_tailoring(min_score=min_score, validation_mode=validation_mode)
+        run_tailoring(min_score=min_score, validation_mode=validation_mode,
+                      selected_titles=selected_titles,
+                      selected_title_terms=selected_title_terms,
+                      discovered_on=discovered_on)
         return {"status": "ok"}
     except Exception as e:
         log.error("Tailoring failed: %s", e)
@@ -324,7 +330,10 @@ def _run_stage_streaming(
 # ---------------------------------------------------------------------------
 
 def _run_sequential(ordered: list[str], min_score: int, workers: int = 1,
-                    validation_mode: str = "normal") -> dict:
+                    validation_mode: str = "normal",
+                    selected_titles: list[str] | None = None,
+                    selected_title_terms: list[str] | None = None,
+                    discovered_on: str | None = None) -> dict:
     """Execute stages one at a time (original behavior)."""
     results: list[dict] = []
     errors: dict[str, str] = {}
@@ -345,6 +354,12 @@ def _run_sequential(ordered: list[str], min_score: int, workers: int = 1,
             if name in ("tailor", "cover"):
                 kwargs["min_score"] = min_score
                 kwargs["validation_mode"] = validation_mode
+            if name == "tailor" and selected_titles:
+                kwargs["selected_titles"] = selected_titles
+            if name == "tailor" and selected_title_terms:
+                kwargs["selected_title_terms"] = selected_title_terms
+            if name == "tailor" and discovered_on:
+                kwargs["discovered_on"] = discovered_on
             if name in ("discover", "enrich"):
                 kwargs["workers"] = workers
             result = runner(**kwargs)
@@ -448,6 +463,9 @@ def run_pipeline(
     stream: bool = False,
     workers: int = 1,
     validation_mode: str = "normal",
+    selected_titles: list[str] | None = None,
+    selected_title_terms: list[str] | None = None,
+    discovered_on: str | None = None,
 ) -> dict:
     """Run pipeline stages.
 
@@ -501,7 +519,10 @@ def run_pipeline(
                                 validation_mode=validation_mode)
     else:
         result = _run_sequential(ordered, min_score, workers=workers,
-                                 validation_mode=validation_mode)
+                                 validation_mode=validation_mode,
+                                 selected_titles=selected_titles,
+                                 selected_title_terms=selected_title_terms,
+                                 discovered_on=discovered_on)
 
     # Summary table
     console.print(f"\n{'=' * 70}")

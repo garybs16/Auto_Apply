@@ -280,25 +280,25 @@ def _setup_ai_features() -> None:
 # ---------------------------------------------------------------------------
 
 def _setup_auto_apply() -> None:
-    """Configure autonomous job application (requires Claude Code CLI)."""
+    """Configure autonomous job application (requires a browser-agent CLI)."""
     console.print(Panel(
         "[bold]Step 5: Auto-Apply (optional)[/bold]\n"
         "ApplyPilot can autonomously fill and submit job applications\n"
-        "using Claude Code as the browser agent."
+        "using Claude Code or Codex as the browser agent."
     ))
 
     if not Confirm.ask("Enable autonomous job applications?", default=True):
         console.print("[dim]You can apply manually using the tailored resumes ApplyPilot generates.[/dim]")
         return
 
-    # Check for Claude Code CLI
-    if shutil.which("claude"):
-        console.print("[green]Claude Code CLI detected.[/green]")
+    # Check for a supported browser-agent CLI
+    detected = [name for name in ("claude", "codex") if shutil.which(name)]
+    if detected:
+        console.print(f"[green]Browser agent detected: {', '.join(detected)}.[/green]")
     else:
         console.print(
-            "[yellow]Claude Code CLI not found on PATH.[/yellow]\n"
-            "Install it from: [bold]https://claude.ai/code[/bold]\n"
-            "Auto-apply won't work until Claude Code is installed."
+            "[yellow]Claude Code and Codex CLIs were not found on PATH.[/yellow]\n"
+            "Auto-apply won't work until one is installed."
         )
 
     # Optional: CapSolver for CAPTCHAs

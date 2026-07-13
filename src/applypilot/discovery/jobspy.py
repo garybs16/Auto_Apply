@@ -8,6 +8,7 @@ search configuration YAML (searches.yaml) rather than being hardcoded.
 """
 
 import logging
+import re
 import sqlite3
 import time
 from datetime import datetime, timezone
@@ -97,9 +98,28 @@ def _location_ok(location: str | None, accept: list[str], reject: list[str]) -> 
 
     loc = location.lower()
 
-    # Remote jobs always OK
+    us_only = "__us__" in {a.lower() for a in accept}
+    us_state_pattern = (
+        r"(?:,|\s)(?:al|ak|az|ar|ca|co|ct|de|fl|ga|hi|id|il|in|ia|ks|ky|la|me|md|ma|mi|mn|ms|mo|mt|ne|nv|nh|nj|nm|ny|nc|nd|oh|ok|or|pa|ri|sc|sd|tn|tx|ut|vt|va|wa|wv|wi|wy)(?:,|\s|$)"
+    )
+    us_names = (
+        "united states", "usa", "u.s.", "alabama", "alaska", "arizona", "arkansas",
+        "california", "colorado", "connecticut", "delaware", "florida", "georgia", "hawaii",
+        "illinois", "indiana", "iowa", "kansas", "kentucky", "louisiana", "maine", "maryland",
+        "massachusetts", "michigan", "minnesota", "mississippi", "missouri", "montana", "nebraska",
+        "nevada", "new hampshire", "new jersey", "new mexico", "new york", "north carolina",
+        "north dakota", "ohio", "oklahoma", "oregon", "pennsylvania", "rhode island", "south carolina",
+        "south dakota", "tennessee", "texas", "utah", "vermont", "virginia", "washington",
+        "west virginia", "wisconsin", "wyoming", "district of columbia"
+    )
+    is_us = any(name in loc for name in us_names) or bool(re.search(us_state_pattern, loc))
+
+    # With the __us__ marker, keep U.S. remote roles and generic remote roles,
+    # but reject remote listings explicitly located outside the U.S.
     if any(r in loc for r in ("remote", "anywhere", "work from home", "wfh", "distributed")):
-        return True
+        foreign = ("canada", "brazil", "portugal", "india", "mexico", "europe", "uk", "united kingdom",
+                   "australia", "germany", "france", "slovakia", "poland", "argentina")
+        return not us_only or is_us or not any(country in loc for country in foreign)
 
     # Reject non-remote matches
     for r in reject:
@@ -107,7 +127,11 @@ def _location_ok(location: str | None, accept: list[str], reject: list[str]) -> 
             return False
 
     # Accept matches
+    if us_only and is_us:
+        return True
     for a in accept:
+        if a == "__us__":
+            continue
         if a.lower() in loc:
             return True
 

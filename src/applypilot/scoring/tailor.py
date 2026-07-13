@@ -400,7 +400,9 @@ def tailor_resume(
             {"role": "user", "content": f"ORIGINAL RESUME:\n{resume_text}\n\n---\n\nTARGET JOB:\n{job_text}\n\nReturn the JSON:"},
         ]
 
-        raw = client.chat(messages, max_tokens=2048, temperature=0.4)
+        # A structured resume can exceed 2K output tokens; allow enough room for
+        # the JSON object to complete instead of retrying truncated responses.
+        raw = client.chat(messages, max_tokens=4096, temperature=0.4)
 
         # Parse JSON from response
         try:
@@ -456,7 +458,10 @@ def tailor_resume(
 # ── Batch Entry Point ────────────────────────────────────────────────────
 
 def run_tailoring(min_score: int = 7, limit: int = 20,
-                  validation_mode: str = "normal") -> dict:
+                  validation_mode: str = "normal",
+                  selected_titles: list[str] | None = None,
+                  selected_title_terms: list[str] | None = None,
+                  discovered_on: str | None = None) -> dict:
     """Generate tailored resumes for high-scoring jobs.
 
     Args:
@@ -471,7 +476,18 @@ def run_tailoring(min_score: int = 7, limit: int = 20,
     resume_text = RESUME_PATH.read_text(encoding="utf-8")
     conn = get_connection()
 
-    jobs = get_jobs_by_stage(conn=conn, stage="pending_tailor", min_score=min_score, limit=limit)
+    # Fetch the full eligible set before applying explicit filters, then cap it.
+    jobs = get_jobs_by_stage(conn=conn, stage="pending_tailor", min_score=min_score,
+                             limit=0 if (selected_titles or selected_title_terms or discovered_on) else limit)
+    if selected_titles:
+        wanted = set(selected_titles)
+        jobs = [job for job in jobs if job.get("title") in wanted]
+    if selected_title_terms:
+        terms = [term.lower() for term in selected_title_terms]
+        jobs = [job for job in jobs if any(term in job.get("title", "").lower() for term in terms)]
+    if discovered_on:
+        jobs = [job for job in jobs if str(job.get("discovered_at", "")).startswith(discovered_on)]
+    jobs = jobs[:limit]
 
     if not jobs:
         log.info("No untailored jobs with score >= %d.", min_score)

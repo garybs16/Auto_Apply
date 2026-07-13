@@ -36,6 +36,7 @@ applypilot run -w 4      # same but parallel (4 threads for discovery/enrichment
 applypilot apply         # autonomous browser-driven submission
 applypilot apply -w 3    # parallel apply (3 Chrome instances)
 applypilot apply --dry-run  # fill forms without submitting
+applypilot apply --agent codex --dry-run  # use Codex as the browser agent
 ```
 
 > **Why two install commands?** `python-jobspy` pins an exact numpy version in its metadata that conflicts with pip's resolver, but works fine at runtime with any modern numpy. The `--no-deps` flag bypasses the resolver; the second command installs jobspy's actual runtime dependencies. Everything except `python-jobspy` installs normally.
@@ -45,7 +46,7 @@ applypilot apply --dry-run  # fill forms without submitting
 ## Two Paths
 
 ### Full Pipeline (recommended)
-**Requires:** Python 3.11+, Node.js (for npx), Gemini API key (free), Claude Code CLI, Chrome
+**Requires:** Python 3.11+, Node.js (for npx), Gemini API key (free), Claude Code CLI or Codex CLI, Chrome
 
 Runs all 6 stages, from job discovery to autonomous application submission. This is the full power of ApplyPilot.
 
@@ -92,7 +93,7 @@ Each stage is independent. Run them all or pick what you need.
 | Node.js 18+ | Auto-apply | Needed for `npx` to run Playwright MCP server |
 | Gemini API key | Scoring, tailoring, cover letters | Free tier (15 RPM / 1M tokens/day) is enough |
 | Chrome/Chromium | Auto-apply | Auto-detected on most systems |
-| Claude Code CLI | Auto-apply | Install from [claude.ai/code](https://claude.ai/code) |
+| Claude Code CLI or Codex CLI | Auto-apply | Choose with `applypilot apply --agent claude|codex` |
 
 **Gemini API key is free.** Get one at [aistudio.google.com](https://aistudio.google.com). OpenAI and local models (Ollama/llama.cpp) are also supported.
 
@@ -175,6 +176,7 @@ applypilot apply --workers 3            # Parallel browser workers
 applypilot apply --dry-run              # Fill forms without submitting
 applypilot apply --continuous           # Run forever, polling for new jobs
 applypilot apply --headless             # Headless browser mode
+applypilot apply --agent codex           # Use Codex for browser-driven submission
 applypilot apply --url URL              # Apply to a specific job
 applypilot status                       # Pipeline statistics
 applypilot dashboard                    # Open HTML results dashboard
