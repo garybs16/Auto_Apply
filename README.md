@@ -1,16 +1,9 @@
-<!-- logo here -->
+# Auto Apply
 
-> **⚠️ ApplyPilot** is the original open-source project, created by [Pickle-Pixel](https://github.com/Pickle-Pixel) and first published on GitHub on **February 17, 2026**. We are **not affiliated** with applypilot.app, useapplypilot.com, or any other product using the "ApplyPilot" name. These sites are **not associated with this project** and may misrepresent what they offer. If you're looking for the autonomous, open-source job application agent — you're in the right place.
+**Gary Samuel's personal AI-assisted job discovery, resume-tailoring, and application automation project.**
 
-# ApplyPilot
-
-**Applied to 1,000 jobs in 2 days. Fully autonomous. Open source.**
-
-[![PyPI version](https://img.shields.io/pypi/v/applypilot?color=blue)](https://pypi.org/project/applypilot/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-green.svg)](LICENSE)
-[![GitHub stars](https://img.shields.io/github/stars/Pickle-Pixel/ApplyPilot?style=social)](https://github.com/Pickle-Pixel/ApplyPilot)
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/S6S01UL5IO)
 
 
 
@@ -22,7 +15,7 @@ https://github.com/user-attachments/assets/7ee3417f-43d4-4245-9952-35df1e77f2df
 
 ## What It Does
 
-ApplyPilot is a 6-stage autonomous job application pipeline. It discovers jobs across 5+ boards, scores them against your resume with AI, tailors your resume per job, writes cover letters, and **submits applications for you**. It navigates forms, uploads documents, answers screening questions, all hands-free.
+Auto Apply is my customized 6-stage job application pipeline. It discovers jobs across multiple boards, scores them against a resume with AI, tailors application materials, writes cover letters, and submits selected applications through browser automation. The installed command remains `applypilot` for compatibility.
 
 Three commands. That's it.
 
@@ -72,9 +65,9 @@ Each stage is independent. Run them all or pick what you need.
 
 ---
 
-## ApplyPilot vs The Alternatives
+## Auto Apply vs The Alternatives
 
-| Feature | ApplyPilot | AIHawk | Manual |
+| Feature | Auto Apply | AIHawk | Manual |
 |---------|-----------|--------|--------|
 | Job discovery | 5 boards + Workday + direct sites | LinkedIn only | One board at a time |
 | AI scoring | 1-10 fit score per job | Basic filtering | Your gut feeling |
@@ -184,14 +177,6 @@ applypilot dashboard                    # Open HTML results dashboard
 
 ---
 
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, coding standards, and PR guidelines.
-
----
-
 ## License
 
-ApplyPilot is licensed under the [GNU Affero General Public License v3.0](LICENSE).
-
-You are free to use, modify, and distribute this software. If you deploy a modified version as a service, you must release your source code under the same license.
+This personal project is based on ApplyPilot by [Pickle-Pixel](https://github.com/Pickle-Pixel/ApplyPilot) and is distributed under the [GNU Affero General Public License v3.0](LICENSE). The original attribution and license are retained as required.
