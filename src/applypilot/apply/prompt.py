@@ -104,23 +104,35 @@ def _build_profile_summary(profile: dict) -> str:
 def _build_location_check(profile: dict, search_config: dict) -> str:
     """Build the location eligibility check section of the prompt.
 
-    Uses the accept_patterns from search config to determine which cities
-    are acceptable for hybrid/onsite roles.
+    Uses the configured accepted locations to determine which cities are
+    acceptable for hybrid/onsite roles. ``location_accept: ["__us__"]``
+    means any location in the United States is acceptable.
     """
     personal = profile["personal"]
     location_cfg = search_config.get("location", {})
     accept_patterns = location_cfg.get("accept_patterns", [])
+    nationwide_us = "__us__" in search_config.get("location_accept", [])
     primary_city = personal.get("city", location_cfg.get("primary", "your city"))
 
     # Build the list of acceptable cities for hybrid/onsite
-    if accept_patterns:
+    if nationwide_us:
+        city_list = "anywhere in the United States"
+    elif accept_patterns:
         city_list = ", ".join(accept_patterns)
     else:
         city_list = primary_city
 
+    us_rule = (
+        '- Any U.S. city or U.S. territory, whether remote, hybrid, or onsite -> ELIGIBLE. Apply.\n'
+        '- Any location outside the United States with no explicit U.S.-remote option -> NOT ELIGIBLE. Stop immediately. Output RESULT:FAILED:not_eligible_location\n'
+        if nationwide_us
+        else
+        ''
+    )
+
     return f"""== LOCATION CHECK (do this FIRST before any form) ==
 Read the job page. Determine the work arrangement. Then decide:
-- "Remote" or "work from anywhere" -> ELIGIBLE. Apply.
+{us_rule}- "Remote" or "work from anywhere" -> ELIGIBLE. Apply.
 - "Hybrid" or "onsite" in {city_list} -> ELIGIBLE. Apply.
 - "Hybrid" or "onsite" in another city BUT the posting also says "remote OK" or "remote option available" -> ELIGIBLE. Apply.
 - "Onsite only" or "hybrid only" in any city outside the list above with NO remote option -> NOT ELIGIBLE. Stop immediately. Output RESULT:FAILED:not_eligible_location
