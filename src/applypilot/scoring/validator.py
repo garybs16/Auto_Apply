@@ -126,10 +126,11 @@ def validate_json_fields(data: dict, profile: dict, mode: str = "normal") -> dic
     # Skills: check for fabrication (always enforced)
     if isinstance(data["skills"], dict):
         skills_text = " ".join(str(v) for v in data["skills"].values()).lower()
+        allowed_skills = _build_skills_set(profile)
         for fake in FABRICATION_WATCHLIST:
             if len(fake) <= 2:
                 continue
-            if fake in skills_text:
+            if fake in skills_text and fake not in allowed_skills:
                 errors.append(f"Fabricated skill: '{fake}'")
 
     # Experience: preserved companies must be present (always enforced)
@@ -247,10 +248,11 @@ def validate_tailored_resume(text: str, profile: dict, original_text: str = "") 
     skills_end = text_lower.find("experience", skills_start) if skills_start != -1 else -1
     if skills_start != -1 and skills_end != -1:
         skills_block = text_lower[skills_start:skills_end]
+        allowed_skills = _build_skills_set(profile)
         for fake in FABRICATION_WATCHLIST:
             if len(fake) <= 2:
                 continue
-            if fake in skills_block:
+            if fake in skills_block and fake not in allowed_skills:
                 errors.append(f"FABRICATED SKILL in Technical Skills: '{fake}'")
 
     # 8. Scan full document for fabrication watchlist items not in original
